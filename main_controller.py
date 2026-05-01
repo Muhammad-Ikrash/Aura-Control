@@ -25,10 +25,11 @@ STEERING_MAX_ANGLE = 20.0   # Degees turned to hit exactly 100% full lock in gam
 STEERING_SENSITIVITY = 1.0  # Multiplier for raw angles (2.0 = twice as snappy)
 
 # Speed Analog Config
-ACCEL_THRESHOLD = 0.28      # Threshold when thumb & pinky begin to spread to hit gas
-ACCEL_MAX = 0.55            # Distance representing 100% Full Gas Pedal
-BRAKE_THRESHOLD = 0.17      # Threshold when hand begins to close for brakes
-BRAKE_MAX = 0.05            # Distance representing 100% Full Brake Pedal
+# Uses rigid palm distance (Wrist to Middle Finger Base) as a proxy for depth
+ACCEL_THRESHOLD = 0.15      # Depth value where gas begins to engage (pushing towards camera)
+ACCEL_MAX = 0.30            # Depth value for 100% Full Gas Pedal
+BRAKE_THRESHOLD = 0.10      # Depth value where brakes begin to engage (pulling away)
+BRAKE_MAX = 0.04            # Depth value for 100% Full Brake Pedal
 
 # Face properties
 NOD_UP_THRESHOLD = 1.6
@@ -180,10 +181,10 @@ def main():
                     cx1, cy1 = int(hl[0].x * w), int(hl[0].y * h)
                     cx2, cy2 = int(hl[5].x * w), int(hl[5].y * h)
                     cv2.line(frame, (cx1, cy1), (cx2, cy2), (255, 0, 0), 4)
-                else: # Speed
-                    depth_val = distance_2d(hl[4], hl[20])
-                    cx1, cy1 = int(hl[4].x * w), int(hl[4].y * h)
-                    cx2, cy2 = int(hl[20].x * w), int(hl[20].y * h)
+                else: # Speed (Depth proxy via Palm length: Wrist to Middle MCP)
+                    depth_val = distance_2d(hl[0], hl[9])
+                    cx1, cy1 = int(hl[0].x * w), int(hl[0].y * h)
+                    cx2, cy2 = int(hl[9].x * w), int(hl[9].y * h)
                     cv2.line(frame, (cx1, cy1), (cx2, cy2), (255, 0, 255), 4)
         
         avg_steer = steer_smoother.update(steer_angle)
