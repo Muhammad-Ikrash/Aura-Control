@@ -2,4 +2,3 @@ step*
 .venv
 git 
 *.md
-*.txt
