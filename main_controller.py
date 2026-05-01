@@ -26,9 +26,9 @@ STEERING_SENSITIVITY = 1.0  # Multiplier for raw angles (2.0 = twice as snappy)
 
 # Speed Analog Config
 # Uses rigid palm distance (Wrist to Middle Finger Base) as a proxy for depth
-ACCEL_THRESHOLD = 0.15      # Depth value where gas begins to engage (pushing towards camera)
-ACCEL_MAX = 0.30            # Depth value for 100% Full Gas Pedal
-BRAKE_THRESHOLD = 0.10      # Depth value where brakes begin to engage (pulling away)
+ACCEL_THRESHOLD = 0.13      # Depth value where gas begins to engage (pushing towards camera)
+ACCEL_MAX = 0.00            # Depth value for 100% Full Gas Pedal
+BRAKE_THRESHOLD = 0.1      # Depth value where brakes begin to engage (pulling away)
 BRAKE_MAX = 0.04            # Depth value for 100% Full Brake Pedal
 
 # Face properties
@@ -56,12 +56,21 @@ def main():
     print("================================================\n")
     try:
         cap_events = {
-            e.EV_KEY: [e.BTN_SOUTH, e.BTN_EAST, e.BTN_NORTH, e.BTN_WEST, e.BTN_START, e.BTN_SELECT],
+            e.EV_KEY: [
+                e.BTN_SOUTH, e.BTN_EAST, e.BTN_NORTH, e.BTN_WEST, 
+                e.BTN_START, e.BTN_SELECT, e.BTN_MODE, e.BTN_THUMBL, e.BTN_THUMBR, 
+                e.BTN_TL, e.BTN_TR, e.BTN_TL2, e.BTN_TR2
+            ],
             e.EV_ABS: [
-                # Analog Stick L-R translates -32768 (full left) to 32767 (full right)
-                (e.ABS_X, AbsInfo(value=0, min=-32768, max=32767, fuzz=16, flat=128, resolution=0)),
-                (e.ABS_Z, AbsInfo(value=0, min=0, max=255, fuzz=0, flat=0, resolution=0)),   # LT (Brake)
-                (e.ABS_RZ, AbsInfo(value=0, min=0, max=255, fuzz=0, flat=0, resolution=0)),  # RT (Gas)
+                # We MUST provide all standard axes so game engines (SDL2/Wine) index the triggers correctly!
+                (e.ABS_X, AbsInfo(value=0, min=-32768, max=32767, fuzz=16, flat=128, resolution=0)),   # Left Stick X
+                (e.ABS_Y, AbsInfo(value=0, min=-32768, max=32767, fuzz=16, flat=128, resolution=0)),   # Left Stick Y
+                (e.ABS_Z, AbsInfo(value=0, min=0, max=255, fuzz=0, flat=0, resolution=0)),             # LT (Brake)
+                (e.ABS_RX, AbsInfo(value=0, min=-32768, max=32767, fuzz=16, flat=128, resolution=0)),  # Right Stick X
+                (e.ABS_RY, AbsInfo(value=0, min=-32768, max=32767, fuzz=16, flat=128, resolution=0)),  # Right Stick Y
+                (e.ABS_RZ, AbsInfo(value=0, min=0, max=255, fuzz=0, flat=0, resolution=0)),            # RT (Gas)
+                (e.ABS_HAT0X, AbsInfo(value=0, min=-1, max=1, fuzz=0, flat=0, resolution=0)),          # D-Pad X
+                (e.ABS_HAT0Y, AbsInfo(value=0, min=-1, max=1, fuzz=0, flat=0, resolution=0)),          # D-Pad Y
             ]
         }
         # Spoof the exact hardware ID for a wired Xbox 360 pad
@@ -94,19 +103,22 @@ def main():
     # Last state trackers to only emit events if changed (evdev requirement)
     last_abs_x, last_abs_z, last_abs_rz = 0, 0, 0
     last_btn_south, last_btn_start = 0, 0
+    last_btn_lt, last_btn_rt = 0, 0
 
     def emit_gamepad(event_type, event_code, value):
         gamepad.write(event_type, event_code, value)
 
     def release_all():
-        nonlocal last_abs_x, last_abs_z, last_abs_rz, last_btn_south, last_btn_start
+        nonlocal last_abs_x, last_abs_z, last_abs_rz, last_btn_south, last_btn_start, last_btn_lt, last_btn_rt
         emit_gamepad(e.EV_ABS, e.ABS_X, 0)
         emit_gamepad(e.EV_ABS, e.ABS_Z, 0)
         emit_gamepad(e.EV_ABS, e.ABS_RZ, 0)
         emit_gamepad(e.EV_KEY, e.BTN_SOUTH, 0)
         emit_gamepad(e.EV_KEY, e.BTN_START, 0)
+        emit_gamepad(e.EV_KEY, e.BTN_TL2, 0)
+        emit_gamepad(e.EV_KEY, e.BTN_TR2, 0)
         gamepad.syn()
-        last_abs_x = last_abs_z = last_abs_rz = last_btn_south = last_btn_start = 0
+        last_abs_x = last_abs_z = last_abs_rz = last_btn_south = last_btn_start = last_btn_lt = last_btn_rt = 0
 
     print("Main loop started. Press 'q' on the CV window to exit safely.")
 
@@ -204,22 +216,23 @@ def main():
         # Analog Speed/Brake conversion
         abs_rz = 0 # Gas (Right Trigger)
         abs_z = 0  # Brake (Left Trigger)
+        btn_rt = 0
+        btn_lt = 0
         
         if avg_depth > ACCEL_THRESHOLD:
-            magnitude = min(1.0, (avg_depth - ACCEL_THRESHOLD) / (ACCEL_MAX - ACCEL_THRESHOLD))
-            abs_rz = int(magnitude * 255)
-            spd_str = f"ACCEL ({int(magnitude*100)}%)"
+            abs_rz = 255 # Binary 100% Gas
+            btn_rt = 1
+            spd_str = "ACCEL (100%)"
             cv2.putText(frame, "RT (Gas) Active", (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         elif avg_depth < BRAKE_THRESHOLD:
-            # Brake depth gets smaller as hand closes, so reverse calculation
-            magnitude = min(1.0, (BRAKE_THRESHOLD - avg_depth) / (BRAKE_THRESHOLD - BRAKE_MAX))
-            abs_z = int(magnitude * 255)
-            spd_str = f"BRAKE ({int(magnitude*100)}%)"
+            abs_z = 255 # Binary 100% Brake
+            btn_lt = 1
+            spd_str = "BRAKE (100%)"
             cv2.putText(frame, "LT (Brake) Active", (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
         else:
              spd_str = "COAST"
              
-        # Emit Gamepad axes
+        # Emit Gamepad axes and buttons
         if abs_x != last_abs_x:
             emit_gamepad(e.EV_ABS, e.ABS_X, abs_x)
             last_abs_x = abs_x
@@ -229,6 +242,14 @@ def main():
         if abs_z != last_abs_z:
             emit_gamepad(e.EV_ABS, e.ABS_Z, abs_z)
             last_abs_z = abs_z
+            
+        if btn_rt != last_btn_rt:
+            emit_gamepad(e.EV_KEY, e.BTN_TR2, btn_rt)
+            last_btn_rt = btn_rt
+            
+        if btn_lt != last_btn_lt:
+            emit_gamepad(e.EV_KEY, e.BTN_TL2, btn_lt)
+            last_btn_lt = btn_lt
             
         gamepad.syn()
 
