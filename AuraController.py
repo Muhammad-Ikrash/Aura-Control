@@ -9,6 +9,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from collections import deque
 
+import hud_overlay as hud
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
@@ -124,6 +125,9 @@ class GestureEngine:
 
     def _loop(self):
         cap = cv2.VideoCapture(0)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 480)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        hud.init_cv_window(hud.WINDOW_TITLE_AURA)
         hand_model_path = get_sys_path('hand_landmarker.task')
         face_model_path = get_sys_path('face_landmarker.task')
 
@@ -145,6 +149,7 @@ class GestureEngine:
             if not ret: continue
 
             frame = cv2.flip(frame, 1)
+            frame = hud.prepare_frame(frame)
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
             ts = int(time.time() * 1000)
@@ -170,8 +175,8 @@ class GestureEngine:
             if paused:
                 self._emit_state(0, 0, 0, 0, 1)
                 last_btn_start = 1
-                cv2.putText(frame, "PAUSED", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
-                cv2.imshow('Aura Controller', frame)
+                pause_reason = "NO FACE DETECTED" if not face_res.face_landmarks else "LOOK AT SCREEN"
+                hud.show_frame(hud.WINDOW_TITLE_AURA, hud.draw_pause_hud(frame, pause_reason))
                 cv2.waitKey(1)
                 continue
             elif last_btn_start == 1:
@@ -188,10 +193,10 @@ class GestureEngine:
                     cat = hand_res.handedness[idx][0].category_name
                     if cat == conf_steer_hand:
                         steer_angle = calculate_angle(hl[0], hl[5])
-                        cv2.line(frame, (int(hl[0].x*w), int(hl[0].y*h)), (int(hl[5].x*w), int(hl[5].y*h)), (255, 0, 0), 4)
+                        hud.draw_steer_hand_line(frame, hl)
                     else:
-                        depth_val = distance_2d(hl[0], hl[9])
-                        cv2.line(frame, (int(hl[0].x*w), int(hl[0].y*h)), (int(hl[9].x*w), int(hl[9].y*h)), (255, 0, 255), 4)
+                        depth_val = hud.palm_depth(hl)
+                        hud.draw_speed_hand_line(frame, hl)
 
             avg_steer = steer_smoother.update(steer_angle)
             avg_depth = speed_smoother.update(depth_val)
@@ -213,15 +218,19 @@ class GestureEngine:
             abs_rz = 0
             abs_z = 0
             btn_rt, btn_lt = 0, 0
+            speed_state = "COAST"
 
             if avg_depth > c_acc_thresh:
                 abs_rz = 255
                 btn_rt = 1
-                cv2.putText(frame, "GAS", (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                speed_state = "GAS"
             elif avg_depth < c_brk_thresh:
                 abs_z = 255
                 btn_lt = 1
-                cv2.putText(frame, "BRAKE", (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                speed_state = "BRAKE"
+
+            steer_dir = "CENTER" if abs_x == 0 else ("RIGHT" if abs_x > 0 else "LEFT")
+            steer_pct = int(abs(abs_x) / 32767.0 * 100)
 
             self._emit_state(abs_x, abs_z, abs_rz, btn_south_pressed, 0, btn_lt, btn_rt)
             
@@ -232,7 +241,18 @@ class GestureEngine:
             last_btn_lt = btn_lt
             last_btn_rt = btn_rt
 
-            cv2.imshow('Aura Controller', frame)
+            hud.show_frame(
+                hud.WINDOW_TITLE_AURA,
+                hud.draw_active_hud(
+                    frame,
+                    steer_dir=steer_dir,
+                    steer_pct=steer_pct,
+                    speed_state=speed_state,
+                    a_pressed=bool(btn_south_pressed),
+                    steer_hand=conf_steer_hand,
+                    sensitivity=c_sens,
+                ),
+            )
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 self.running = False
                 break

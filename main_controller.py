@@ -1,4 +1,5 @@
 import cv2
+import hud_overlay as hud
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
@@ -85,6 +86,10 @@ def main():
     if not cap.isOpened():
         print("Camera failed to open.")
         return
+
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 480)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    hud.init_cv_window(hud.WINDOW_TITLE_MAIN)
     
     # Initialize Detectors
     base_options_hand = python.BaseOptions(model_asset_path=HAND_MODEL)
@@ -127,6 +132,7 @@ def main():
         if not ret: break
         
         frame = cv2.flip(frame, 1)
+        frame = hud.prepare_frame(frame)
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
         ts = int(time.time() * 1000)
@@ -164,9 +170,8 @@ def main():
             gamepad.syn()
             last_btn_start = 1
             
-            cv2.rectangle(frame, (0, 0), (w, 80), (0, 0, 255), -1)
-            cv2.putText(frame, "PAUSED: LOOKING AWAY / NO FACE", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 3)
-            cv2.imshow('Main Controller', frame)
+            pause_reason = "NO FACE DETECTED" if not face_res.face_landmarks else "LOOK AT SCREEN"
+            hud.show_frame(hud.WINDOW_TITLE_MAIN, hud.draw_pause_hud(frame, pause_reason))
             if cv2.waitKey(1) & 0xFF == ord('q'): break
             continue
         elif not paused and last_btn_start == 1:
@@ -190,14 +195,10 @@ def main():
                 
                 if category == expected_steering: # Steering
                     steer_angle = calculate_angle(hl[0], hl[5])
-                    cx1, cy1 = int(hl[0].x * w), int(hl[0].y * h)
-                    cx2, cy2 = int(hl[5].x * w), int(hl[5].y * h)
-                    cv2.line(frame, (cx1, cy1), (cx2, cy2), (255, 0, 0), 4)
-                else: # Speed (Depth proxy via Palm length: Wrist to Middle MCP)
-                    depth_val = distance_2d(hl[0], hl[9])
-                    cx1, cy1 = int(hl[0].x * w), int(hl[0].y * h)
-                    cx2, cy2 = int(hl[9].x * w), int(hl[9].y * h)
-                    cv2.line(frame, (cx1, cy1), (cx2, cy2), (255, 0, 255), 4)
+                    hud.draw_steer_hand_line(frame, hl)
+                else: # Speed (Depth proxy via palm axis: Wrist to knuckle center)
+                    depth_val = hud.palm_depth(hl)
+                    hud.draw_speed_hand_line(frame, hl)
         
         avg_steer = steer_smoother.update(steer_angle)
         avg_depth = speed_smoother.update(depth_val)
@@ -218,19 +219,16 @@ def main():
         abs_z = 0  # Brake (Left Trigger)
         btn_rt = 0
         btn_lt = 0
+        speed_state = "COAST"
         
         if avg_depth > ACCEL_THRESHOLD:
             abs_rz = 255 # Binary 100% Gas
             btn_rt = 1
-            spd_str = "ACCEL (100%)"
-            cv2.putText(frame, "RT (Gas) Active", (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            speed_state = "GAS"
         elif avg_depth < BRAKE_THRESHOLD:
             abs_z = 255 # Binary 100% Brake
             btn_lt = 1
-            spd_str = "BRAKE (100%)"
-            cv2.putText(frame, "LT (Brake) Active", (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-        else:
-             spd_str = "COAST"
+            speed_state = "BRAKE"
              
         # Emit Gamepad axes and buttons
         if abs_x != last_abs_x:
@@ -253,15 +251,20 @@ def main():
             
         gamepad.syn()
 
-        # Visual Overlay
         pct_steer = int(abs(abs_x) / 32767.0 * 100)
-        cv2.putText(frame, f"Steer: {dir_str} {pct_steer}% | Sens: {STEERING_SENSITIVITY}", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-        cv2.putText(frame, f"Speed: {spd_str}", (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-        
-        if btn_south_pressed:
-            cv2.putText(frame, "'A' BUTTON PRESSED", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-
-        cv2.imshow('Main Controller', frame)
+        steer_hand = "Left" if STEERING_HAND == 0 else "Right"
+        hud.show_frame(
+            hud.WINDOW_TITLE_MAIN,
+            hud.draw_active_hud(
+                frame,
+                steer_dir=dir_str,
+                steer_pct=pct_steer,
+                speed_state=speed_state,
+                a_pressed=bool(btn_south_pressed),
+                steer_hand=steer_hand,
+                sensitivity=STEERING_SENSITIVITY,
+            ),
+        )
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
